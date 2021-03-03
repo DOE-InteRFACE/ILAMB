@@ -1,5 +1,6 @@
 from netCDF4 import Dataset
 import numpy as np
+import geopandas as gpd
 
 class Regions(object):
     """A class for unifying the treatment of regions in ILAMB.
@@ -39,6 +40,43 @@ class Regions(object):
                            [1,0,1],
                            [1,1,1]],dtype=bool)
         Regions._regions[label] = [name,lat,lon,mask]
+
+    def addRegionShapeFile(self, filename, res):
+        """Add regions found in a Shapefile.
+       
+        This routine will read region gemoetries from a Shapefile and
+		create ILAMB regions. Shapefiles provided can be in any
+		geospatial projection, however, they will all be projected to
+		standard EPSG 4326 latlon projection. Routine expects the
+		shapefile to provide 'label' attribute to populate attribute
+		'labels' for the region.
+        """
+        vregions = gp.read_file(filename)
+        # check projection of the shapefile
+        # if not EPSG 4326, reproject to 4326
+        if vregions.crs != 4326:
+            print("Reprojection %s from EPSG %d to EPSG 4326"%(filename, vregions.crs))
+			vregions.to_crs(epsg=4326)
+		labels = vregions.cat.unique().tolist()
+        regionnames = []
+        for c in labels:
+            regionnames.append(vregions.label[c])
+
+        # turn the vectors into grids
+        shapes = ((geom, value) for geom, value in zip(vregions.geometry, vregions.cat))
+        transform = rasterio.transform.from_bounds(vregions.bounds.minx.min(), 
+            vregions.bounds.miny.min(), vregions.bounds.maxx.max(),
+            vregions.bounds.maxy.max(), res, res)
+        rregions = features.rasterize(shapes=shapes,
+            out_shape=((vregions.bounds.maxy.max()-vregions.bounds.miny.min())/res, (vregions.bounds.maxx.max()-vregions.bounds.minx.min())/res),
+            transform=transform)
+
+        for i in labels:
+            label = labels[i].lower()
+            name  = regionnames[i]
+            mask  = rregions != i
+            Regions._regions[label] = [name,lat,lon,mask]
+        return labels 
 
     def addRegionNetCDF4(self,filename):
         """Add regions found in a netCDF4 file.
