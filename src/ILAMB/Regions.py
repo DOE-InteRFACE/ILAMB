@@ -1,6 +1,8 @@
 from netCDF4 import Dataset
 import numpy as np
 import geopandas as gpd
+import rasterio
+from rasterio import features
 
 class Regions(object):
     """A class for unifying the treatment of regions in ILAMB.
