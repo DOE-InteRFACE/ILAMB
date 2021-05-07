@@ -43,7 +43,7 @@ class Regions(object):
                            [1,1,1]],dtype=bool)
         Regions._regions[label] = [name,lat,lon,mask]
 
-    def addRegionShapeFile(self, filename, res):
+    def addRegionShapeFile(self, filename):
         """Add regions found in a Shapefile.
        
         This routine will read region gemoetries from a Shapefile and
@@ -53,32 +53,35 @@ class Regions(object):
 		shapefile to provide 'label' attribute to populate attribute
 		'labels' for the region.
         """
-        vregions = gp.read_file(filename)
+        vregions = gpd.read_file(filename)
         # check projection of the shapefile
         # if not EPSG 4326, reproject to 4326
         if vregions.crs != 4326:
             print("Reprojection %s from EPSG %d to EPSG 4326"%(filename, vregions.crs))
-			vregions.to_crs(epsg=4326)
-		labels = vregions.cat.unique().tolist()
+            vregions.to_crs(epsg=4326)
+        catids = vregions.cat.unique().tolist()
         regionnames = []
-        for c in labels:
+        for c in catids:
             regionnames.append(vregions.label[c])
 
-        # turn the vectors into grids
-        shapes = ((geom, value) for geom, value in zip(vregions.geometry, vregions.cat))
-        transform = rasterio.transform.from_bounds(vregions.bounds.minx.min(), 
-            vregions.bounds.miny.min(), vregions.bounds.maxx.max(),
-            vregions.bounds.maxy.max(), res, res)
-        rregions = features.rasterize(shapes=shapes,
-            out_shape=((vregions.bounds.maxy.max()-vregions.bounds.miny.min())/res, (vregions.bounds.maxx.max()-vregions.bounds.minx.min())/res),
-            transform=transform)
+#        # turn the vectors into grids
+#        shapes = ((geom, value) for geom, value in zip(vregions.geometry, vregions.cat))
+#        transform = rasterio.transform.from_bounds(vregions.bounds.minx.min(), 
+#            vregions.bounds.miny.min(), vregions.bounds.maxx.max(),
+#            vregions.bounds.maxy.max(), res, res)
+#        rregions = features.rasterize(shapes=shapes,
+#            out_shape=((vregions.bounds.maxy.max()-vregions.bounds.miny.min())/res, (vregions.bounds.maxx.max()-vregions.bounds.minx.min())/res),
+#            transform=transform)
 
-        for i in labels:
-            label = labels[i].lower()
-            name  = regionnames[i]
-            mask  = rregions != i
-            Regions._regions[label] = [name,lat,lon,mask]
-        return labels 
+        for c in catids:
+            catid = c
+            print(vregions.label[vregions.cat == c])
+            name  = vregions.label[vregions.cat == c].unique()[0].lower()
+#            shape = vregions[vregions.cat == c]
+            shape = ((geom, value) for geom, value in zip(vregions.geometry[vregions.cat == c], vregions.cat[vregions.cat == c]))
+			#mask  = rregions != i
+            Regions._regions[name] = [name, catid, shape]
+        return regionnames 
 
     def addRegionNetCDF4(self,filename):
         """Add regions found in a netCDF4 file.
@@ -176,17 +179,49 @@ class Regions(object):
         mask : numpy.ndarray
             a boolean array appropriate for masking the input variable data
         """
-        name,lat,lon,mask = Regions._regions[label]
-        if lat.size == 4 and lon.size == 4:
-            # if lat/lon bounds, find which bounds we are in
-            rows = ((var.lat[:,np.newaxis]>=lat[:-1])*(var.lat[:,np.newaxis]<=lat[1:])).argmax(axis=1)
-            cols = ((var.lon[:,np.newaxis]>=lon[:-1])*(var.lon[:,np.newaxis]<=lon[1:])).argmax(axis=1)
-        else:
-            # if more globally defined, nearest neighbor is fine
-            rows = (np.abs(lat[:,np.newaxis]-var.lat)).argmin(axis=0)
-            cols = (np.abs(lon[:,np.newaxis]-var.lon)).argmin(axis=0)
-        if var.ndata: return mask[np.ix_(rows,cols)].diagonal()
-        return mask[np.ix_(rows,cols)]
+
+        if len(Regions._regions[label]) == 4:
+            name,lat,lon,mask = Regions._regions[label]
+            if lat.size == 4 and lon.size == 4:
+                # if lat/lon bounds, find which bounds we are in
+                rows = ((var.lat[:,np.newaxis]>=lat[:-1])*(var.lat[:,np.newaxis]<=lat[1:])).argmax(axis=1)
+                cols = ((var.lon[:,np.newaxis]>=lon[:-1])*(var.lon[:,np.newaxis]<=lon[1:])).argmax(axis=1)
+            else:
+                # if more globally defined, nearest neighbor is fine
+                rows = (np.abs(lat[:,np.newaxis]-var.lat)).argmin(axis=0)
+                cols = (np.abs(lon[:,np.newaxis]-var.lon)).argmin(axis=0)
+            if var.ndata: return mask[np.ix_(rows,cols)].diagonal()
+            return mask[np.ix_(rows,cols)]
+        if len(Regions._regions[label]) == 3:
+            #print(var.lon.min())
+            #print(var.lat.min())
+            #print(var.lon.max())
+            #print(var.lat.max())
+            nrows=len(var.lat)
+            ncols=len(var.lon)
+            res=(var.lat.max()-var.lat.min())/nrows
+            print("rows %d cols %d res %f"%(nrows, ncols, res))
+            name,catid,shape = Regions._regions[label]
+            print("Name %s catid %d"%(name, catid))
+            #transform = rasterio.transform.from_bounds(shape.bounds.minx.min(), 
+            #    shape.bounds.miny.min(), shape.bounds.maxx.max(),
+            #    shape.bounds.maxy.max(), res, res)
+            transform = rasterio.transform.from_bounds(var.lon.min(), 
+                var.lat.min(), var.lon.max(),
+                var.lat.max(), ncols, nrows)
+            print(transform)			
+            #mask = features.rasterize(shape,
+            #    out_shape=(int((shape.bounds.maxy.max()-shape.bounds.miny.min())/res),
+            #     int((shape.bounds.maxx.max()-shape.bounds.minx.min())/res)),
+            #    transform=transform)
+            print(shape)
+            rregion = features.rasterize(shapes=shape, fill=9999, out_shape=(nrows,ncols), transform=transform)
+            mask = rregion == catid
+            print(mask)
+            print(mask.min())
+            print(mask.max())
+            return mask
+
 
     def hasData(self,label,var):
         """Checks if the ILAMB.Variable has data on the given region.
